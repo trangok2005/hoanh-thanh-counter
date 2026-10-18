@@ -326,13 +326,111 @@ button { cursor: pointer; }
 .save-status.is-saved { color: var(--mild-ink); }
 .save-status.is-error { color: var(--danger); }
 
-.list-hint {
+  .list-hint {
   margin-top: 6px;
   font-size: 13.5px;
   color: var(--muted);
-}
+  }
 
-.empty-hint {
+  /* =============== THÊM MÓN =============== */
+  .add-item-card {
+    margin-top: 12px;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .add-item-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .add-item-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
+    white-space: nowrap;
+  }
+
+  .add-select {
+    min-width: 220px;
+    flex: 1 1 auto;
+    height: var(--tap);
+    padding: 0 12px;
+    font-size: 16px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1.5px solid var(--border-strong);
+    border-radius: var(--radius);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235d6f85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .add-select:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(29, 111, 224, .25);
+  }
+
+  .add-qty {
+    min-width: 110px;
+    flex: 0 0 auto;
+    height: var(--tap);
+    padding: 0 10px;
+    font-size: 18px;
+    font-weight: 800;
+    text-align: center;
+    color: var(--navy);
+    background: var(--surface);
+    border: 1.5px solid var(--border-strong);
+    border-radius: var(--radius);
+    font-variant-numeric: tabular-nums;
+  }
+  .add-qty:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(29, 111, 224, .25);
+  }
+
+  @media (max-width: 480px) {
+    .add-item-body {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .add-item-label {
+      text-align: left;
+      font-size: 12.5px;
+      margin-bottom: 4px;
+      display: block;
+      white-space: normal;
+    }
+    .add-select, .add-qty {
+      width: 100%;
+      min-width: 0;
+    }
+    #add-item-btn {
+      width: 100%;
+      flex: 0 0 auto;
+      justify-content: center;
+    }
+  }
+
+  @media (min-width: 960px) {
+    .add-item-body { gap: 14px; }
+    .add-select { min-width: 280px; }
+    .add-qty { min-width: 150px; }
+    #add-item-btn { min-width: 150px; }
+  }
+
+  .empty-hint {
   display: flex;
   align-items: flex-start;
   gap: 10px;

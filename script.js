@@ -1,8 +1,4 @@
-/* =========================================================
-   Hoành Thánh Counter — script.js
-   Vanilla JavaScript, không phụ thuộc thư viện.
-   Để thêm món mới: thêm một object vào mảng ITEMS bên dưới.
-   ========================================================= */
+
 (function () {
   'use strict';
 
@@ -139,6 +135,17 @@
 
   function renderItems() {
     ITEMS.forEach(function (item) { renderRow(item); });
+  }
+
+  function populateItemSelect() {
+    var select = dom.itemSelect;
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Chọn món --</option>';
+    ITEMS.forEach(function (item) {
+      var option = el('option', null, itemLabel(item));
+      option.value = item.id;
+      select.appendChild(option);
+    });
   }
 
   function refresh() {
@@ -461,7 +468,7 @@
 
     body.addEventListener('focusin', function (e) {
       var input = e.target;
-      if (input.matches && input.matches('.counter-input')) {
+      if ((input.matches && input.matches('.counter-input')) || input.matches('#add-qty')) {
         setTimeout(function () {
           if (document.activeElement === input) input.select();
         }, 0);
@@ -498,6 +505,27 @@
     dom.resetBtn.addEventListener('click', requestReset);
     dom.newOrderBtn.addEventListener('click', requestReset);
     dom.copyBtn.addEventListener('click', copyResults);
+
+    dom.addItemBtn.addEventListener('click', function () {
+      var id = dom.itemSelect.value;
+      if (!id) {
+        showToast('Vui lòng chọn món');
+        dom.itemSelect.focus();
+        return;
+      }
+      var qty = sanitizeQuantity(dom.addQty.value);
+      if (qty <= 0) {
+        showToast('Vui lòng nhập số phần lớn hơn 0');
+        dom.addQty.focus();
+        dom.addQty.select();
+        return;
+      }
+      var item = itemMap.get(id);
+      updateQuantity(id, qty);
+      dom.addQty.value = '1';
+      dom.itemSelect.value = '';
+      showToast('Đã thêm ' + itemLabel(item));
+    });
 
     dom.dialog.addEventListener('close', function () {
       if (dom.dialog.returnValue === 'confirm') resetAll();
@@ -539,11 +567,15 @@
     dom.resetBtn = document.getElementById('reset-btn');
     dom.newOrderBtn = document.getElementById('new-order-btn');
     dom.copyBtn = document.getElementById('copy-btn');
+    dom.itemSelect = document.getElementById('item-select');
+    dom.addQty = document.getElementById('add-qty');
+    dom.addItemBtn = document.getElementById('add-item-btn');
     dom.dialog = document.getElementById('confirm-dialog');
     dom.dialogDesc = document.getElementById('dialog-desc');
     dom.toast = document.getElementById('toast');
 
     buildRows();
+    populateItemSelect();
     loadState();
     renderItems();
     refresh();
