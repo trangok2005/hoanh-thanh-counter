@@ -466,12 +466,23 @@
       updateQuantity(rowIdFrom(input), value, { keepInput: true });
     });
 
+    // Nhấn vào ô nhập số phần -> tự bôi đen toàn bộ, gõ mới sẽ thay thế luôn
+    function selectInputText(input) {
+      if (!input) return;
+      input.select();
+    }
+
     body.addEventListener('focusin', function (e) {
       var input = e.target;
       if ((input.matches && input.matches('.counter-input')) || input.matches('#add-qty')) {
-        setTimeout(function () {
-          if (document.activeElement === input) input.select();
-        }, 0);
+        setTimeout(function () { selectInputText(input); }, 0);
+      }
+    });
+
+    body.addEventListener('click', function (e) {
+      var input = e.target;
+      if ((input.matches && input.matches('.counter-input')) || input.matches('#add-qty')) {
+        setTimeout(function () { selectInputText(input); }, 0);
       }
     });
 
@@ -570,6 +581,11 @@
     dom.itemSelect = document.getElementById('item-select');
     dom.addQty = document.getElementById('add-qty');
     dom.addItemBtn = document.getElementById('add-item-btn');
+
+    // Ô thêm món: tự bôi đen khi focus / click
+    dom.addQty.addEventListener('focus', function () { dom.addQty.select(); });
+    dom.addQty.addEventListener('click', function () { dom.addQty.select(); });
+
     dom.dialog = document.getElementById('confirm-dialog');
     dom.dialogDesc = document.getElementById('dialog-desc');
     dom.toast = document.getElementById('toast');
