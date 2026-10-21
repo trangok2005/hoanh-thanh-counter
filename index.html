@@ -72,14 +72,11 @@
         </div>
         <div class="list-actions">
           <span class="save-status" id="save-status" role="status" aria-live="polite">Tự động lưu</span>
-          <button type="button" class="btn btn--soft" id="copy-btn">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
-            Sao chép kết quả
+          <button type="button" class="btn btn--primary" id="scan-btn">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.4-2h6.2l1.4 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            Quét ảnh
           </button>
-          <button type="button" class="btn btn--primary" id="new-order-btn">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            Đơn hàng mới
-          </button>
+          <input type="file" id="scan-input" accept="image/*" hidden>
         </div>
       </div>
       <p class="list-hint">Nhập số phần hoặc nhấn + / − để tính tổng số viên</p>
@@ -129,6 +126,44 @@
         <button type="submit" value="confirm" class="btn btn--danger">Xác nhận reset</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="key-dialog" class="dialog" aria-labelledby="key-title">
+    <form method="dialog" id="key-form">
+      <h2 id="key-title">Nhập OpenRouter API key</h2>
+      <p>Key chỉ được giữ tạm trong bộ nhớ của tab này (không lưu vào máy, không nằm trong mã nguồn). Tải lại trang sẽ phải nhập lại.</p>
+      <input type="password" id="key-input" class="field" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-or-v1-..." aria-label="OpenRouter API key">
+      <a class="key-link" href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Lấy API key tại OpenRouter</a>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn btn--ghost" formnovalidate>Hủy</button>
+        <button type="submit" value="confirm" class="btn btn--primary">Tiếp tục quét</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="scan-dialog" class="dialog dialog--wide" aria-labelledby="scan-title">
+    <div class="scan-body">
+      <h2 id="scan-title">Quét ảnh đơn hàng</h2>
+      <div class="scan-preview" id="scan-preview" hidden><img id="scan-img" alt="Ảnh đơn hàng đã chọn"></div>
+      <p class="scan-status" id="scan-status" role="status" aria-live="polite"></p>
+
+      <div id="scan-form" hidden>
+        <p class="scan-help">Kiểm tra và chỉnh lại nếu cần, rồi bấm xác nhận để tính.</p>
+        <div class="scan-rows" id="scan-rows"></div>
+        <p class="scan-unmatched" id="scan-unmatched" hidden></p>
+        <label class="scan-merge" id="scan-merge-wrap" hidden>
+          <input type="checkbox" id="scan-merge" checked>
+          <span>Cộng dồn vào số phần đang có (bỏ chọn để thay thế toàn bộ)</span>
+        </label>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn btn--ghost" id="scan-cancel">Hủy</button>
+        <button type="button" class="btn btn--ghost" id="scan-retry" hidden>Thử lại</button>
+        <button type="button" class="btn btn--primary" id="scan-confirm" hidden>Xác nhận &amp; tính</button>
+      </div>
+      <button type="button" class="link-btn" id="scan-change-key">Đổi API key</button>
+    </div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
