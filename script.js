@@ -1,19 +1,32 @@
+/**
+ * Hoành Thánh Counter - bản gọn, ưu tiên tốc độ
+ * - AI layer: các hàm thuần (resize → fetch → parse), không class thừa
+ * - Resize ảnh 1 lần, không chặn main thread
+ * - Retry chỉ với lỗi tạm thời, timeout theo từng lần gọi
+ */
 (function () {
   'use strict';
 
-  /* ---------- Cấu hình ---------- */
-  const AI_CONFIG = {
-    MODEL: 'nvidia/nemotron-3.5-super-vl:free',
-    ENDPOINT: 'https://openrouter.ai/api/v1/chat/completions',
-    TIMEOUT: 60000,
-    MAX_RETRY: 3
+  // ============================================================
+  // CONFIG
+  // ============================================================
+  const AI = {
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    // Có thể thêm model dự phòng: OpenRouter sẽ tự chuyển sang model kế tiếp nếu model đầu lỗi
+    models: ['nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free'],
+    timeoutMs: 30000,   // mỗi lần gọi
+    maxRetry: 2,        // số lần thử lại (tổng tối đa 3 lần gọi)
+    retryDelayMs: 800,
+    maxImageSide: 1280,
+    jpegQuality: 0.8,
+    userText: 'Đọc ảnh và trả về JSON theo đúng schema.'
   };
 
-  var STORAGE_KEY = 'hoanh-thanh-counter:v1';
-  var MAX_SERVINGS = 9999;
+  const STORAGE_KEY = 'hoanh-thanh-counter:v1';
+  const MAX_SERVINGS = 9999;
+  const MAX_DIGITS = String(MAX_SERVINGS).length;
 
-  /* ---------- Dữ liệu món ăn cố định ---------- */
-  var ITEMS = [
+  const ITEMS = [
     { id: 'hoanh-thanh-ly-nuoc-cay',        name: 'Hoành thánh ly nước',  variant: 'Cay',       waterPerServing: 5, friedPerServing: 0, servings: 0 },
     { id: 'hoanh-thanh-ly-nuoc-khong-cay',  name: 'Hoành thánh ly nước',  variant: 'Không cay', waterPerServing: 5, friedPerServing: 0, servings: 0 },
     { id: 'hoanh-thanh-ky-phung-cay',       name: 'Hoành thánh Kỳ Phùng', variant: 'Cay',       waterPerServing: 2, friedPerServing: 3, servings: 0 },
@@ -24,383 +37,7 @@
     { id: 'bun-bo-khong-cay',               name: 'Bún bò',               variant: 'Không cay', waterPerServing: 1, friedPerServing: 0, servings: 0 }
   ];
 
-  var numberFormat = new Intl.NumberFormat('vi-VN');
-  var itemMap = new Map();
-  var rowMap = new Map();
-  var dom = {};
-  var saveTimer = null;
-  var toastTimer = null;
-  var storageWorks = true;
-
-  ITEMS.forEach(function (item) { itemMap.set(item.id, item); });
-
-  /* ---------- Tiện ích ---------- */
-  function formatNumber(n) {
-    return numberFormat.format(n);
-  }
-
-  function el(tag, className, text) {
-    var node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
-
-  function svgIcon(pathData) {
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('width', '22');
-    svg.setAttribute('height', '22');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '2.6');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    var path = document.createElementNS(ns, 'path');
-    path.setAttribute('d', pathData);
-    svg.appendChild(path);
-    return svg;
-  }
-
-  function itemLabel(item) {
-    return item.variant ? item.name + ' ' + item.variant.toLowerCase() : item.name;
-  }
-
-  /* Chuẩn hóa mọi giá trị đầu vào thành số nguyên không âm (0..MAX_SERVINGS). */
-  function sanitizeQuantity(value) {
-    var n;
-    if (typeof value === 'number') {
-      n = Math.floor(value);
-    } else {
-      var digits = String(value == null ? '' : value).replace(/\D/g, '');
-      n = digits === '' ? 0 : parseInt(digits, 10);
-    }
-    if (!isFinite(n) || n < 0) return 0;
-    return n > MAX_SERVINGS ? MAX_SERVINGS : n;
-  }
-
-  /* ---------- Phép tính (luôn tính lại từ dữ liệu gốc) ---------- */
-  function calculateItem(item) {
-    return {
-      water: item.servings * item.waterPerServing,
-      fried: item.servings * item.friedPerServing
-    };
-  }
-
-  function calculateTotals() {
-    var water = 0;
-    var fried = 0;
-    var servings = 0;
-    ITEMS.forEach(function (item) {
-      var r = calculateItem(item);
-      water += r.water;
-      fried += r.fried;
-      servings += item.servings;
-    });
-    return { water: water, fried: fried, all: water + fried, servings: servings };
-  }
-
-  /* ---------- Hiển thị ---------- */
-  function setStat(node, value) {
-    var text = formatNumber(value);
-    if (node.textContent === text) return;
-    node.textContent = text;
-    node.classList.toggle('is-long', text.length >= 7);
-    node.classList.remove('bump');
-    void node.offsetWidth;
-    node.classList.add('bump');
-  }
-
-  function renderSummary(totals) {
-    setStat(dom.totalWater, totals.water);
-    setStat(dom.totalFried, totals.fried);
-    dom.totalServings.textContent = formatNumber(totals.servings) + ' phần';
-    dom.emptyHint.hidden = totals.servings > 0;
-  }
-
-  function renderRow(item, options) {
-    var ref = rowMap.get(item.id);
-    if (!ref) return;
-    var r = calculateItem(item);
-
-    if (!(options && options.keepInput)) {
-      ref.input.value = String(item.servings);
-    }
-
-    ref.waterTotal.textContent = formatNumber(r.water);
-    ref.waterTotal.classList.toggle('is-zero', r.water === 0);
-    ref.friedTotal.textContent = formatNumber(r.fried);
-    ref.friedTotal.classList.toggle('is-zero', r.fried === 0);
-
-    ref.tr.classList.toggle('is-active', item.servings > 0);
-    ref.minus.setAttribute('aria-disabled', item.servings <= 0 ? 'true' : 'false');
-    ref.plus.setAttribute('aria-disabled', item.servings >= MAX_SERVINGS ? 'true' : 'false');
-  }
-
-  function renderItems() {
-    ITEMS.forEach(function (item) { renderRow(item); });
-  }
-
-  function populateItemSelect() {
-    var select = dom.itemSelect;
-    if (!select) return;
-    select.innerHTML = '<option value="">-- Chọn món --</option>';
-    ITEMS.forEach(function (item) {
-      var option = el('option', null, itemLabel(item));
-      option.value = item.id;
-      select.appendChild(option);
-    });
-  }
-
-  function refresh() {
-    renderSummary(calculateTotals());
-  }
-
-  /* Dựng danh sách một lần duy nhất; sau đó chỉ cập nhật tại chỗ. */
-  function buildRows() {
-    var frag = document.createDocumentFragment();
-
-    ITEMS.forEach(function (item, index) {
-      var label = itemLabel(item);
-      var tr = el('tr', 'item-row');
-      tr.dataset.id = item.id;
-
-      tr.appendChild(el('td', 'c-index', String(index + 1)));
-
-      var tdName = el('th', 'c-name');
-      tdName.scope = 'row';
-      tdName.appendChild(el('span', 'item-name', item.name));
-      tr.appendChild(tdName);
-
-      var tdVariant = el('td', 'c-variant');
-      if (item.variant) {
-        var isSpicy = item.variant === 'Cay';
-        tdVariant.appendChild(el('span', 'tag ' + (isSpicy ? 'tag--spicy' : 'tag--mild'), item.variant));
-      } else {
-        var dash = el('span', 'dash', '—');
-        dash.setAttribute('aria-label', 'Không áp dụng');
-        tdVariant.appendChild(dash);
-      }
-      tr.appendChild(tdVariant);
-
-      var tdWR = el('td', 'c-water-rate');
-      tdWR.appendChild(el('span', 'm-only', 'Nước: '));
-      tdWR.appendChild(document.createTextNode(String(item.waterPerServing)));
-      tdWR.appendChild(el('span', 'm-only', ' viên/phần'));
-      tr.appendChild(tdWR);
-
-      var tdFR = el('td', 'c-fried-rate');
-      tdFR.appendChild(el('span', 'm-only', 'Chiên: '));
-      tdFR.appendChild(document.createTextNode(String(item.friedPerServing)));
-      tdFR.appendChild(el('span', 'm-only', ' viên/phần'));
-      tr.appendChild(tdFR);
-
-      var tdQty = el('td', 'c-qty');
-      var counter = el('div', 'counter');
-
-      var minus = el('button', 'counter-btn');
-      minus.type = 'button';
-      minus.dataset.action = 'dec';
-      minus.setAttribute('aria-label', 'Giảm một phần ' + label);
-      minus.appendChild(svgIcon('M5 12h14'));
-
-      var input = el('input', 'counter-input');
-      input.type = 'text';
-      input.inputMode = 'numeric';
-      input.pattern = '[0-9]*';
-      input.autocomplete = 'off';
-      input.maxLength = String(MAX_SERVINGS).length;
-      input.value = '0';
-      input.dataset.role = 'qty';
-      input.setAttribute('aria-label', 'Số phần ' + label);
-
-      var plus = el('button', 'counter-btn');
-      plus.type = 'button';
-      plus.dataset.action = 'inc';
-      plus.setAttribute('aria-label', 'Tăng một phần ' + label);
-      plus.appendChild(svgIcon('M12 5v14M5 12h14'));
-
-      counter.appendChild(minus);
-      counter.appendChild(input);
-      counter.appendChild(plus);
-      tdQty.appendChild(counter);
-      tr.appendChild(tdQty);
-
-      var tdWT = el('td', 'c-water-total');
-      tdWT.appendChild(el('span', 'm-label', 'Nước'));
-      var waterTotal = el('span', 'result-val is-zero', '0');
-      tdWT.appendChild(waterTotal);
-      tr.appendChild(tdWT);
-
-      var tdFT = el('td', 'c-fried-total');
-      tdFT.appendChild(el('span', 'm-label', 'Chiên'));
-      var friedTotal = el('span', 'result-val is-zero', '0');
-      tdFT.appendChild(friedTotal);
-      tr.appendChild(tdFT);
-
-      rowMap.set(item.id, {
-        tr: tr, input: input, minus: minus, plus: plus,
-        waterTotal: waterTotal, friedTotal: friedTotal
-      });
-      frag.appendChild(tr);
-    });
-
-    dom.body.appendChild(frag);
-  }
-
-  /* ---------- Cập nhật số phần ---------- */
-  function updateQuantity(id, value, options) {
-    var item = itemMap.get(id);
-    if (!item) return;
-    var next = sanitizeQuantity(value);
-    if (next === item.servings && !(options && options.force)) {
-      renderRow(item, options);
-      return;
-    }
-    item.servings = next;
-    renderRow(item, options);
-    refresh();
-    scheduleSave();
-  }
-
-  /* ---------- Lưu trạng thái (localStorage) ---------- */
-  function setSaveStatus(state) {
-    var node = dom.saveStatus;
-    node.classList.remove('is-saved', 'is-error');
-    if (state === 'saving') {
-      node.textContent = 'Đang lưu…';
-    } else if (state === 'saved') {
-      node.textContent = 'Đã lưu';
-      node.classList.add('is-saved');
-    } else if (state === 'error') {
-      node.textContent = 'Không lưu được trên trình duyệt này';
-      node.classList.add('is-error');
-    } else {
-      node.textContent = 'Tự động lưu';
-    }
-  }
-
-  function saveNow() {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    var servings = {};
-    ITEMS.forEach(function (item) { servings[item.id] = item.servings; });
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, servings: servings }));
-      storageWorks = true;
-      setSaveStatus('saved');
-    } catch (err) {
-      storageWorks = false;
-      setSaveStatus('error');
-    }
-  }
-
-  function scheduleSave() {
-    if (!storageWorks) { setSaveStatus('error'); return; }
-    setSaveStatus('saving');
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveNow, 250);
-  }
-
-  function loadState() {
-    var raw = null;
-    try {
-      raw = window.localStorage.getItem(STORAGE_KEY);
-    } catch (err) {
-      storageWorks = false;
-      setSaveStatus('error');
-      return;
-    }
-    if (!raw) return;
-
-    try {
-      var data = JSON.parse(raw);
-      var saved = data && typeof data === 'object' ? data.servings : null;
-      if (!saved || typeof saved !== 'object') return;
-
-      ITEMS.forEach(function (item) {
-        if (!Object.prototype.hasOwnProperty.call(saved, item.id)) return;
-        var v = saved[item.id];
-        if (typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0 && v <= MAX_SERVINGS) {
-          item.servings = v;
-        }
-      });
-      setSaveStatus('saved');
-    } catch (err) {
-    }
-  }
-
-  /* ---------- Toast ---------- */
-  function showToast(message) {
-    clearTimeout(toastTimer);
-    dom.toast.textContent = message;
-    dom.toast.hidden = false;
-    dom.toast.style.animation = 'none';
-    void dom.toast.offsetWidth;
-    dom.toast.style.animation = '';
-    toastTimer = setTimeout(function () { dom.toast.hidden = true; }, 2200);
-  }
-
-  /* ---------- Reset ---------- */
-  function resetAll() {
-    ITEMS.forEach(function (item) { item.servings = 0; });
-    renderItems();
-    refresh();
-    saveNow();
-    showToast('Đã reset tất cả');
-  }
-
-  function requestReset() {
-    var totals = calculateTotals();
-    if (totals.servings === 0) {
-      showToast('Đơn hàng đang trống');
-      return;
-    }
-    var dlg = dom.dialog;
-    if (dlg && typeof dlg.showModal === 'function') {
-      dom.dialogDesc.textContent =
-        'Đang có ' + formatNumber(totals.servings) + ' phần. Toàn bộ số phần sẽ được đặt về 0 và không thể hoàn tác.';
-      dlg.returnValue = '';
-      dlg.showModal();
-    } else if (window.confirm('Đặt toàn bộ số phần về 0?')) {
-      resetAll();
-    }
-  }
-
-  /* ---------- Quét ảnh bằng Vision AI ---------- */
-  var MAX_IMAGE_SIDE = 1600;
-  var apiKey = '';
-  var pendingFile = null;
-  var scanAbort = null;
-  var scanToken = 0;
-
-  function resizeImage(file) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-      img.onload = function () {
-        var w = img.naturalWidth, h = img.naturalHeight;
-        var scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(w, h));
-        var canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(w * scale));
-        canvas.height = Math.max(1, Math.round(h * scale));
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        resolve({ dataUrl: dataUrl, base64: dataUrl.split(',')[1] });
-      };
-      img.onerror = function () {
-        URL.revokeObjectURL(url);
-        reject(new Error('Không đọc được ảnh này. Hãy thử ảnh khác (JPG/PNG).'));
-      };
-      img.src = url;
-    });
-  }
-
-  /* Tên gọi thực tế trên máy POS / phiếu -> id món (giúp AI ghép đúng) */
-  var ALIASES = {
+  const ALIASES = {
     'hoanh-thanh-ly-nuoc-cay':        ['Hoành Thánh Ly Nước Cay'],
     'hoanh-thanh-ly-nuoc-khong-cay':  ['Hoành Thánh Ly Nước Không Cay'],
     'hoanh-thanh-ky-phung-cay':       ['Hoành Thánh Kỳ Phùng Ly Cay'],
@@ -411,17 +48,21 @@
     'bun-bo-khong-cay':               ['Bún Bò Ly Sate Không Cay']
   };
 
-  var SCAN_USER_TEXT = 'Đọc ảnh và trả về JSON theo đúng schema.';
+  const itemLabel = item => (item.variant ? `${item.name} ${item.variant.toLowerCase()}` : item.name);
 
-  function buildPrompt() {
-    var menu = ITEMS.map(function (it) {
-      var names = (ALIASES[it.id] || [itemLabel(it)]).map(function (n) { return '"' + n + '"'; }).join(' / ');
-      return '- id "' + it.id + '" ← ' + names;
+  // ============================================================
+  // AI LAYER (hàm thuần)
+  // ============================================================
+  const SYSTEM_PROMPT = (() => {
+    const menu = ITEMS.map(item => {
+      const names = (ALIASES[item.id] || [itemLabel(item)]).map(n => `"${n}"`).join(' / ');
+      return `- id "${item.id}" ← ${names}`;
     }).join('\n');
+
     return [
       'Bạn là bộ đọc số liệu cho quán hoành thánh. Ảnh thường là ảnh chụp màn hình máy POS (báo cáo chốt ca / báo cáo bán hàng) hoặc phiếu đơn hàng; ảnh có thể bị nghiêng, lóa, mờ ở các dòng cuối.',
       '',
-      'NHIỆM VỤ: chỉ trích số lượng của 8 món thuộc danh sách dưới đây. Bỏ qua mọi món khác.',
+      `NHIỆM VỤ: chỉ trích số lượng của ${ITEMS.length} món thuộc danh sách dưới đây. Bỏ qua mọi món khác.`,
       '',
       'DANH SÁCH MÓN CẦN LẤY (id ← tên hiển thị trên máy):',
       menu,
@@ -439,461 +80,785 @@
       '- Nếu một món trong danh sách không xuất hiện trong ảnh thì không đưa vào "items" (đừng điền 0, đừng đoán).',
       '- Mỗi món chỉ xuất hiện một lần; nếu có nhiều dòng cùng món thì cộng số lượng lại.',
       '',
-      'KẾT QUẢ:',
+      'KẾT QUẢ (chỉ trả JSON, không kèm giải thích):',
       '- "items": mảng {id, servings} với servings là số lượng đọc được.',
       '- "unmatched": CHỈ dùng khi có dòng thuộc nhóm hoành thánh / mì / bún bò mà bạn không chắc là món nào, hoặc không đọc rõ số lượng (ghi tên dòng đó kèm lý do ngắn). Nếu mọi thứ rõ ràng thì để mảng rỗng.',
       '- Nếu ảnh không phải đơn hàng/báo cáo bán hàng hoặc không có món nào trong danh sách, trả "items" rỗng.'
     ].join('\n');
-  }
+  })();
 
-  function visionScan(base64, signal) {
-    var ids = ITEMS.map(function (it) { return it.id; });
-    var prompt = buildPrompt();
-    var body = {
-      model: AI_CONFIG.MODEL,
-      messages: [
-        { role: 'system', content: prompt },
-        { role: 'user', content: [
-          { type: 'text', text: SCAN_USER_TEXT },
-          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + base64 } }
-        ]}
-      ],
-      temperature: 0,
-      response_format: { type: 'json_object' }
-    };
-    return fetch(AI_CONFIG.ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + apiKey
-      },
-      body: JSON.stringify(body),
-      signal: signal
-    }).then(function (res) {
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok) {
-          var msg = (data && data.error && data.error.message) || '';
-          var err = new Error(msg || ('Lỗi ' + res.status));
-          err.status = res.status;
-          throw err;
-        }
-        return data;
-      });
-    }).then(function (data) {
-      var content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-      if (!content) throw new Error('AI không trả về kết quả. Hãy thử lại hoặc chụp rõ hơn.');
-      var parsed;
-      try { parsed = JSON.parse(content); } catch (e) { throw new Error('Kết quả trả về không đọc được. Hãy thử lại.'); }
-      return parsed;
+  /** Resize 1 lần, không chặn main thread (createImageBitmap + toBlob). */
+  async function resizeImage(file) {
+    let bmp;
+    try {
+      bmp = await createImageBitmap(file);
+    } catch (e) {
+      throw new Error('Không đọc được ảnh này. Hãy thử ảnh khác (JPG/PNG).');
+    }
+    const scale = Math.min(1, AI.maxImageSide / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    if (bmp.close) bmp.close();
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', AI.jpegQuality));
+    if (!blob) throw new Error('Không xử lý được ảnh này. Hãy thử ảnh khác.');
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('Không đọc được ảnh này.'));
+      fr.readAsDataURL(blob);
     });
+    return { dataUrl, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) };
   }
 
-  function describeError(err) {
+  function parseAIResponse(data) {
+    const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    if (!content) throw new Error('AI không trả về kết quả. Hãy thử lại hoặc chụp rõ hơn.');
+
+    // Nhiều model bỏ qua response_format và bọc JSON trong ```json ... ```
+    const text = String(content).replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (e) { throw new Error('Kết quả trả về không đọc được. Hãy thử lại.'); }
+
+    return {
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      unmatched: Array.isArray(parsed.unmatched) ? parsed.unmatched : []
+    };
+  }
+
+  /** Một lần gọi API, timeout riêng cho lần này. */
+  async function fetchOnce(base64, apiKey, signal) {
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, AI.timeoutMs);
+    const onAbort = () => ctrl.abort();
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      const res = await fetch(AI.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'X-Title': 'Hoanh Thanh Counter'
+        },
+        body: JSON.stringify({
+          models: AI.models,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: AI.userText },
+                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+              ]
+            }
+          ],
+          temperature: 0,
+          response_format: { type: 'json_object' }
+        }),
+        signal: ctrl.signal
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error((data && data.error && data.error.message) || `Lỗi ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return parseAIResponse(data);
+    } catch (err) {
+      if (timedOut) { const e = new Error('timeout'); e.isTimeout = true; throw e; }
+      if (err instanceof TypeError) err.isNetwork = true;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  const isTransient = err => {
+    if (!err || err.name === 'AbortError' || err.isTimeout) return false;
+    if (err.isNetwork) return true;
+    const s = err.status;
+    return s === 408 || s === 429 || s >= 500;
+  };
+
+  /** Gọi API, chỉ retry lỗi tạm thời (mạng, 408, 429, 5xx). */
+  async function scanImage(base64, apiKey, signal) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetchOnce(base64, apiKey, signal);
+      } catch (err) {
+        if (attempt >= AI.maxRetry || signal.aborted || !isTransient(err)) throw err;
+        await new Promise(r => setTimeout(r, AI.retryDelayMs * 2 ** attempt));
+      }
+    }
+  }
+
+  function mapError(err) {
+    if (err && err.isTimeout) return { text: 'Quét quá lâu nên đã dừng. Hãy thử lại.' };
     if (err && err.name === 'AbortError') return null;
-    var st = err && err.status;
-    if (st === 401) return { text: 'API Key không hợp lệ.', badKey: true };
-    if (st === 403) return { text: 'API Key không có quyền truy cập.', badKey: true };
-    if (st === 429) return { text: 'Đã vượt giới hạn miễn phí. Chờ một chút rồi thử lại.' };
-    if (st >= 500) return { text: 'Máy chủ OpenRouter đang bận. Hãy thử lại sau ít giây.' };
-    if (err instanceof TypeError) return { text: 'Không kết nối được Internet. Kiểm tra mạng rồi thử lại.' };
+
+    const s = err && err.status;
+    if (s === 401) return { text: 'API Key không hợp lệ.', badKey: true };
+    if (s === 403) return { text: 'API Key không có quyền truy cập.', badKey: true };
+    if (s === 402) return { text: 'Tài khoản hết credit.' };
+    if (s === 404) return { text: 'Model không còn khả dụng. Hãy đổi model trong cấu hình.' };
+    if (s === 429) return { text: 'Đã vượt giới hạn miễn phí. Chờ một chút rồi thử lại.' };
+    if (s >= 500) return { text: 'Máy chủ AI đang bận. Hãy thử lại sau ít giây.' };
+    if (err && err.isNetwork) return { text: 'Không kết nối được Internet. Kiểm tra mạng rồi thử lại.' };
     return { text: (err && err.message) || 'Có lỗi khi quét ảnh.' };
   }
 
-  function scanSetState(state, message) {
-    dom.scanStatus.textContent = message || '';
-    dom.scanStatus.classList.toggle('is-error', state === 'error');
-    dom.scanStatus.classList.toggle('is-loading', state === 'loading');
-    dom.scanStatus.hidden = !message;
-    dom.scanForm.hidden = state !== 'review';
-    dom.scanConfirm.hidden = state !== 'review';
-    dom.scanRetry.hidden = state !== 'error';
-  }
+  // ============================================================
+  // APP
+  // ============================================================
+  class HoanhThanhCounter {
+    constructor() {
+      this.numberFormat = new Intl.NumberFormat('vi-VN');
+      this.itemMap = new Map(ITEMS.map(item => [item.id, item]));
+      this.rowMap = new Map();
+      this.dom = {};
+      this.saveTimer = null;
+      this.toastTimer = null;
+      this.storageWorks = true;
 
-  function makeScanRow(id, qty) {
-    var row = el('div', 'scan-row');
-    var select = el('select', 'scan-select');
-    select.setAttribute('aria-label', 'Món');
-    ITEMS.forEach(function (it) {
-      var o = el('option', null, itemLabel(it));
-      o.value = it.id;
-      select.appendChild(o);
-    });
-    select.value = id;
-
-    var input = el('input', 'scan-qty');
-    input.type = 'text';
-    input.inputMode = 'numeric';
-    input.autocomplete = 'off';
-    input.maxLength = String(MAX_SERVINGS).length;
-    input.value = String(qty);
-    input.setAttribute('aria-label', 'Số phần');
-    input.addEventListener('input', function () {
-      var d = input.value.replace(/\D/g, '').slice(0, String(MAX_SERVINGS).length);
-      if (d !== input.value) input.value = d;
-    });
-    input.addEventListener('focus', function () { setTimeout(function () { input.select(); }, 0); });
-
-    var unit = el('span', 'scan-unit', 'phần');
-
-    var del = el('button', 'scan-del');
-    del.type = 'button';
-    del.setAttribute('aria-label', 'Xóa dòng này');
-    del.appendChild(svgIcon('M6 6l12 12M18 6L6 18'));
-    del.addEventListener('click', function () {
-      row.remove();
-      updateScanConfirmState();
-    });
-
-    row.appendChild(select);
-    row.appendChild(input);
-    row.appendChild(unit);
-    row.appendChild(del);
-    return row;
-  }
-
-  function updateScanConfirmState() {
-    var hasRows = dom.scanRows.children.length > 0;
-    dom.scanConfirm.disabled = !hasRows;
-    if (!hasRows) {
-      dom.scanStatus.hidden = false;
-      dom.scanStatus.classList.remove('is-error', 'is-loading');
-      dom.scanStatus.textContent = 'Không còn món nào để tính.';
-    } else {
-      dom.scanStatus.hidden = true;
+      this.apiKey = '';
+      this.pendingFile = null;
+      this.scanAbort = null;
+      this.scanToken = 0;
     }
-  }
 
-  function showScanResult(result) {
-    var totals = {};
-    (result.items || []).forEach(function (r) {
-      if (!r || !itemMap.has(r.id)) return;
-      var q = sanitizeQuantity(r.servings);
-      if (q > 0) totals[r.id] = Math.min(MAX_SERVINGS, (totals[r.id] || 0) + q);
-    });
-
-    dom.scanRows.innerHTML = '';
-    ITEMS.forEach(function (it) {
-      if (totals[it.id]) dom.scanRows.appendChild(makeScanRow(it.id, totals[it.id]));
-    });
-
-    var unmatched = (result.unmatched || []).filter(function (t) { return typeof t === 'string' && t.trim(); });
-    dom.scanUnmatched.hidden = unmatched.length === 0;
-    dom.scanUnmatched.textContent = unmatched.length ? 'Chưa nhận diện được: ' + unmatched.join('; ') : '';
-
-    dom.scanMergeWrap.hidden = calculateTotals().servings === 0;
-
-    if (!dom.scanRows.children.length) {
-      scanSetState('error', 'Không tìm thấy món nào trong ảnh. Hãy chụp rõ hơn hoặc nhập tay.');
-      return;
+    // ---------- Init ----------
+    init() {
+      this.cacheDOM();
+      this.bindEvents();
+      this.buildRows();
+      this.populateItemSelect();
+      this.loadState();
+      this.renderItems();
+      this.refresh();
     }
-    scanSetState('review', '');
-    dom.scanConfirm.disabled = false;
-  }
 
-  function runScan(file) {
-    var token = ++scanToken;
-    if (scanAbort) scanAbort.abort();
-    scanAbort = new AbortController();
-    var signal = scanAbort.signal;
-
-    dom.scanPreview.hidden = true;
-    scanSetState('loading', 'Đang quét ảnh…');
-    if (!dom.scanDialog.open) dom.scanDialog.showModal();
-
-    var timer = setTimeout(function () { scanAbort && scanAbort.abort(); }, AI_CONFIG.TIMEOUT);
-
-    resizeImage(file).then(function (img) {
-      if (token !== scanToken) return null;
-      dom.scanImg.src = img.dataUrl;
-      dom.scanPreview.hidden = false;
-      return visionScanWithRetry(img.base64, signal);
-    }).then(function (result) {
-      clearTimeout(timer);
-      if (token !== scanToken || !result) return;
-      showScanResult(result);
-    }).catch(function (err) {
-      clearTimeout(timer);
-      if (token !== scanToken) return;
-      var info = describeError(err) || { text: 'Quét quá lâu nên đã dừng. Hãy thử lại.' };
-      if (info.badKey) apiKey = '';
-      scanSetState('error', info.text);
-    });
-  }
-
-  function visionScanWithRetry(base64, signal, attempt) {
-    attempt = attempt || 1;
-    return visionScan(base64, signal).catch(function (err) {
-      if (attempt >= AI_CONFIG.MAX_RETRY) throw err;
-      var delay = attempt === 1 ? 1000 : 2000;
-      return new Promise(function (resolve) { setTimeout(resolve, delay); })
-        .then(function () { return visionScanWithRetry(base64, signal, attempt + 1); });
-    });
-  }
-
-  function askApiKey() {
-    dom.keyInput.value = '';
-    dom.keyDialog.returnValue = '';
-    dom.keyDialog.showModal();
-    setTimeout(function () { dom.keyInput.focus(); }, 0);
-  }
-
-  function startScanWith(file) {
-    pendingFile = file;
-    if (!apiKey) { askApiKey(); return; }
-    runScan(file);
-  }
-
-  function closeScan() {
-    scanToken++;
-    if (scanAbort) { scanAbort.abort(); scanAbort = null; }
-    if (dom.scanDialog.open) dom.scanDialog.close();
-    dom.scanRows.innerHTML = '';
-    dom.scanImg.removeAttribute('src');
-    pendingFile = null;
-  }
-
-  function confirmScan() {
-    var rows = dom.scanRows.querySelectorAll('.scan-row');
-    var add = {};
-    rows.forEach(function (row) {
-      var id = row.querySelector('select').value;
-      var q = sanitizeQuantity(row.querySelector('input').value);
-      if (itemMap.has(id) && q > 0) add[id] = (add[id] || 0) + q;
-    });
-    var ids = Object.keys(add);
-    if (!ids.length) {
-      showToast('Chưa có số phần nào để tính');
-      return;
+    cacheDOM() {
+      [
+        'items-body', 'summary', 'total-water', 'total-fried', 'total-servings',
+        'empty-hint', 'save-status', 'reset-btn', 'scan-btn', 'scan-input',
+        'key-dialog', 'key-input', 'scan-dialog', 'scan-preview', 'scan-img',
+        'scan-status', 'scan-form', 'scan-rows', 'scan-unmatched', 'scan-merge',
+        'scan-merge-wrap', 'scan-cancel', 'scan-retry', 'scan-confirm', 'scan-change-key',
+        'item-select', 'add-qty', 'add-item-btn', 'confirm-dialog', 'dialog-desc', 'toast'
+      ].forEach(id => {
+        this.dom[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = document.getElementById(id);
+      });
     }
-    var merge = dom.scanMergeWrap.hidden ? true : dom.scanMerge.checked;
-    ITEMS.forEach(function (item) {
-      var base = merge ? item.servings : 0;
-      var next = base + (add[item.id] || 0);
-      if (next !== item.servings) updateQuantity(item.id, next);
-    });
-    var total = ids.reduce(function (n, id) { return n + add[id]; }, 0);
-    closeScan();
-    showToast('Đã tính ' + formatNumber(total) + ' phần từ ảnh');
-  }
 
-  function bindScanEvents() {
-    dom.scanBtn.addEventListener('click', function () { dom.scanInput.click(); });
+    // ---------- Utils ----------
+    formatNumber(n) { return this.numberFormat.format(n); }
 
-    dom.scanInput.addEventListener('change', function () {
-      var file = dom.scanInput.files && dom.scanInput.files[0];
-      dom.scanInput.value = '';
-      if (!file) return;
-      if (!/^image\//.test(file.type)) { showToast('Vui lòng chọn một tệp ảnh'); return; }
-      startScanWith(file);
-    });
+    el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
 
-    dom.keyDialog.addEventListener('close', function () {
-      var key = dom.keyInput.value.trim();
-      var ok = dom.keyDialog.returnValue === 'confirm';
-      dom.keyInput.value = '';
-      if (!ok) { if (!dom.scanDialog.open) pendingFile = null; return; }
-      if (!key) { showToast('Chưa nhập API key'); return; }
-      apiKey = key;
-      if (pendingFile) runScan(pendingFile);
-    });
+    svgIcon(pathData) {
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      const attrs = {
+        viewBox: '0 0 24 24', width: '22', height: '22', fill: 'none',
+        stroke: 'currentColor', 'stroke-width': '2.6', 'stroke-linecap': 'round',
+        'stroke-linejoin': 'round', 'aria-hidden': 'true'
+      };
+      Object.keys(attrs).forEach(k => svg.setAttribute(k, attrs[k]));
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', pathData);
+      svg.appendChild(path);
+      return svg;
+    }
 
-    dom.scanCancel.addEventListener('click', closeScan);
-    dom.scanDialog.addEventListener('cancel', function (e) { e.preventDefault(); closeScan(); });
-    dom.scanConfirm.addEventListener('click', confirmScan);
-    dom.scanRetry.addEventListener('click', function () {
-      if (!pendingFile) { closeScan(); return; }
-      if (!apiKey) { askApiKey(); return; }
-      runScan(pendingFile);
-    });
-    dom.scanChangeKey.addEventListener('click', function () { apiKey = ''; askApiKey(); });
-  }
+    sanitizeQuantity(value) {
+      let n;
+      if (typeof value === 'number') n = Math.floor(value);
+      else {
+        const digits = String(value == null ? '' : value).replace(/\D/g, '');
+        n = digits === '' ? 0 : parseInt(digits, 10);
+      }
+      if (!isFinite(n) || n < 0) return 0;
+      return n > MAX_SERVINGS ? MAX_SERVINGS : n;
+    }
 
-  /* ---------- Sự kiện (event delegation trên tbody) ---------- */
-  function rowIdFrom(node) {
-    var tr = node.closest ? node.closest('tr[data-id]') : null;
-    return tr ? tr.dataset.id : null;
-  }
+    calculateItem(item) {
+      return { water: item.servings * item.waterPerServing, fried: item.servings * item.friedPerServing };
+    }
 
-  function bindEvents() {
-    var body = dom.body;
+    calculateTotals() {
+      let water = 0, fried = 0, servings = 0;
+      ITEMS.forEach(item => {
+        const r = this.calculateItem(item);
+        water += r.water;
+        fried += r.fried;
+        servings += item.servings;
+      });
+      return { water, fried, all: water + fried, servings };
+    }
 
-    body.addEventListener('click', function (e) {
-      var btn = e.target.closest('.counter-btn');
-      if (!btn) return;
-      var id = rowIdFrom(btn);
-      var item = itemMap.get(id);
+    // ---------- Render ----------
+    setStat(node, value) {
+      const text = this.formatNumber(value);
+      if (node.textContent === text) return;
+      node.textContent = text;
+      node.classList.toggle('is-long', text.length >= 7);
+      node.classList.remove('bump');
+      void node.offsetWidth;
+      node.classList.add('bump');
+    }
+
+    renderSummary(totals) {
+      this.setStat(this.dom.totalWater, totals.water);
+      this.setStat(this.dom.totalFried, totals.fried);
+      this.dom.totalServings.textContent = this.formatNumber(totals.servings) + ' phần';
+      this.dom.emptyHint.hidden = totals.servings > 0;
+    }
+
+    renderRow(item, options) {
+      const ref = this.rowMap.get(item.id);
+      if (!ref) return;
+      const r = this.calculateItem(item);
+
+      if (!(options && options.keepInput)) ref.input.value = String(item.servings);
+
+      ref.waterTotal.textContent = this.formatNumber(r.water);
+      ref.waterTotal.classList.toggle('is-zero', r.water === 0);
+      ref.friedTotal.textContent = this.formatNumber(r.fried);
+      ref.friedTotal.classList.toggle('is-zero', r.fried === 0);
+
+      ref.tr.classList.toggle('is-active', item.servings > 0);
+      ref.minus.setAttribute('aria-disabled', item.servings <= 0 ? 'true' : 'false');
+      ref.plus.setAttribute('aria-disabled', item.servings >= MAX_SERVINGS ? 'true' : 'false');
+    }
+
+    renderItems() { ITEMS.forEach(item => this.renderRow(item)); }
+
+    refresh() { this.renderSummary(this.calculateTotals()); }
+
+    populateItemSelect() {
+      const select = this.dom.itemSelect;
+      if (!select) return;
+      select.innerHTML = '<option value="">-- Chọn món --</option>';
+      ITEMS.forEach(item => {
+        const option = this.el('option', null, itemLabel(item));
+        option.value = item.id;
+        select.appendChild(option);
+      });
+    }
+
+    buildRows() {
+      const frag = document.createDocumentFragment();
+
+      ITEMS.forEach((item, index) => {
+        const label = itemLabel(item);
+        const tr = this.el('tr', 'item-row');
+        tr.dataset.id = item.id;
+
+        tr.appendChild(this.el('td', 'c-index', String(index + 1)));
+
+        const tdName = this.el('th', 'c-name');
+        tdName.scope = 'row';
+        tdName.appendChild(this.el('span', 'item-name', item.name));
+        tr.appendChild(tdName);
+
+        const tdVariant = this.el('td', 'c-variant');
+        if (item.variant) {
+          const isSpicy = item.variant === 'Cay';
+          tdVariant.appendChild(this.el('span', `tag ${isSpicy ? 'tag--spicy' : 'tag--mild'}`, item.variant));
+        } else {
+          const dash = this.el('span', 'dash', '—');
+          dash.setAttribute('aria-label', 'Không áp dụng');
+          tdVariant.appendChild(dash);
+        }
+        tr.appendChild(tdVariant);
+
+        const tdWR = this.el('td', 'c-water-rate');
+        tdWR.appendChild(this.el('span', 'm-only', 'Nước: '));
+        tdWR.appendChild(document.createTextNode(String(item.waterPerServing)));
+        tdWR.appendChild(this.el('span', 'm-only', ' viên/phần'));
+        tr.appendChild(tdWR);
+
+        const tdFR = this.el('td', 'c-fried-rate');
+        tdFR.appendChild(this.el('span', 'm-only', 'Chiên: '));
+        tdFR.appendChild(document.createTextNode(String(item.friedPerServing)));
+        tdFR.appendChild(this.el('span', 'm-only', ' viên/phần'));
+        tr.appendChild(tdFR);
+
+        const tdQty = this.el('td', 'c-qty');
+        const counter = this.el('div', 'counter');
+
+        const minus = this.el('button', 'counter-btn');
+        minus.type = 'button';
+        minus.dataset.action = 'dec';
+        minus.setAttribute('aria-label', 'Giảm một phần ' + label);
+        minus.appendChild(this.svgIcon('M5 12h14'));
+
+        const input = this.el('input', 'counter-input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.pattern = '[0-9]*';
+        input.autocomplete = 'off';
+        input.maxLength = MAX_DIGITS;
+        input.value = '0';
+        input.setAttribute('aria-label', 'Số phần ' + label);
+
+        const plus = this.el('button', 'counter-btn');
+        plus.type = 'button';
+        plus.dataset.action = 'inc';
+        plus.setAttribute('aria-label', 'Tăng một phần ' + label);
+        plus.appendChild(this.svgIcon('M12 5v14M5 12h14'));
+
+        counter.append(minus, input, plus);
+        tdQty.appendChild(counter);
+        tr.appendChild(tdQty);
+
+        const tdWT = this.el('td', 'c-water-total');
+        tdWT.appendChild(this.el('span', 'm-label', 'Nước'));
+        const waterTotal = this.el('span', 'result-val is-zero', '0');
+        tdWT.appendChild(waterTotal);
+        tr.appendChild(tdWT);
+
+        const tdFT = this.el('td', 'c-fried-total');
+        tdFT.appendChild(this.el('span', 'm-label', 'Chiên'));
+        const friedTotal = this.el('span', 'result-val is-zero', '0');
+        tdFT.appendChild(friedTotal);
+        tr.appendChild(tdFT);
+
+        this.rowMap.set(item.id, { tr, input, minus, plus, waterTotal, friedTotal });
+        frag.appendChild(tr);
+      });
+
+      this.dom.itemsBody.appendChild(frag);
+    }
+
+    // ---------- Quantity ----------
+    updateQuantity(id, value, options) {
+      const item = this.itemMap.get(id);
       if (!item) return;
-      if (btn.dataset.action === 'inc') updateQuantity(id, item.servings + 1);
-      else if (btn.dataset.action === 'dec') updateQuantity(id, item.servings - 1);
-    });
-
-    body.addEventListener('beforeinput', function (e) {
-      if (!e.target.matches('.counter-input')) return;
-      if (e.data && /\D/.test(e.data)) e.preventDefault();
-    });
-
-    body.addEventListener('input', function (e) {
-      var input = e.target;
-      if (!input.matches || !input.matches('.counter-input')) return;
-      var digits = input.value.replace(/\D/g, '').slice(0, String(MAX_SERVINGS).length);
-      if (digits !== input.value) input.value = digits;
-      updateQuantity(rowIdFrom(input), digits === '' ? 0 : parseInt(digits, 10), { keepInput: true });
-    });
-
-    body.addEventListener('paste', function (e) {
-      var input = e.target;
-      if (!input.matches || !input.matches('.counter-input')) return;
-      e.preventDefault();
-      var text = (e.clipboardData || window.clipboardData).getData('text') || '';
-      var m = text.match(/\d+/);
-      var value = m ? sanitizeQuantity(m[0]) : 0;
-      input.value = String(value);
-      updateQuantity(rowIdFrom(input), value, { keepInput: true });
-    });
-
-    function selectInputText(input) {
-      if (!input) return;
-      input.select();
-    }
-
-    body.addEventListener('focusin', function (e) {
-      var input = e.target;
-      if ((input.matches && input.matches('.counter-input')) || input.matches('#add-qty')) {
-        setTimeout(function () { selectInputText(input); }, 0);
-      }
-    });
-
-    body.addEventListener('click', function (e) {
-      var input = e.target;
-      if ((input.matches && input.matches('.counter-input')) || input.matches('#add-qty')) {
-        setTimeout(function () { selectInputText(input); }, 0);
-      }
-    });
-
-    body.addEventListener('focusout', function (e) {
-      var input = e.target;
-      if (!input.matches || !input.matches('.counter-input')) return;
-      var item = itemMap.get(rowIdFrom(input));
-      if (item) input.value = String(item.servings);
-    });
-
-    body.addEventListener('keydown', function (e) {
-      var input = e.target;
-      if (!input.matches || !input.matches('.counter-input')) return;
-      var id = rowIdFrom(input);
-      var item = itemMap.get(id);
-      if (!item) return;
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        updateQuantity(id, item.servings + 1);
-        input.select();
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        updateQuantity(id, item.servings - 1);
-        input.select();
-      } else if (e.key === 'Enter') {
-        input.blur();
-      }
-    });
-
-    dom.resetBtn.addEventListener('click', requestReset);
-    bindScanEvents();
-
-    dom.addItemBtn.addEventListener('click', function () {
-      var id = dom.itemSelect.value;
-      if (!id) {
-        showToast('Vui lòng chọn món');
-        dom.itemSelect.focus();
+      const next = this.sanitizeQuantity(value);
+      if (next === item.servings && !(options && options.force)) {
+        this.renderRow(item, options);
         return;
       }
-      var qty = sanitizeQuantity(dom.addQty.value);
-      if (qty <= 0) {
-        showToast('Vui lòng nhập số phần lớn hơn 0');
-        dom.addQty.focus();
-        dom.addQty.select();
-        return;
-      }
-      var item = itemMap.get(id);
-      updateQuantity(id, qty);
-      dom.addQty.value = '1';
-      dom.itemSelect.value = '';
-      showToast('Đã thêm ' + itemLabel(item));
-    });
-
-    dom.dialog.addEventListener('close', function () {
-      if (dom.dialog.returnValue === 'confirm') resetAll();
-    });
-    dom.dialog.addEventListener('click', function (e) {
-      if (e.target !== dom.dialog) return;
-      var r = dom.dialog.getBoundingClientRect();
-      var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-      if (!inside) dom.dialog.close('cancel');
-    });
-
-    if ('ResizeObserver' in window) {
-      new ResizeObserver(function () {
-        document.documentElement.style.setProperty('--summary-h', dom.summary.offsetHeight + 'px');
-      }).observe(dom.summary);
+      item.servings = next;
+      this.renderRow(item, options);
+      this.refresh();
+      this.scheduleSave();
     }
 
-    window.addEventListener('storage', function (e) {
-      if (e.key !== STORAGE_KEY) return;
-      ITEMS.forEach(function (item) { item.servings = 0; });
-      loadState();
-      renderItems();
-      refresh();
-    });
+    // ---------- Storage ----------
+    setSaveStatus(state) {
+      const node = this.dom.saveStatus;
+      node.classList.remove('is-saved', 'is-error');
+      if (state === 'saving') node.textContent = 'Đang lưu…';
+      else if (state === 'saved') { node.textContent = 'Đã lưu'; node.classList.add('is-saved'); }
+      else if (state === 'error') { node.textContent = 'Không lưu được trên trình duyệt này'; node.classList.add('is-error'); }
+      else node.textContent = 'Tự động lưu';
+    }
+
+    saveNow() {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      const servings = {};
+      ITEMS.forEach(item => { servings[item.id] = item.servings; });
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, servings }));
+        this.storageWorks = true;
+        this.setSaveStatus('saved');
+      } catch (err) {
+        this.storageWorks = false;
+        this.setSaveStatus('error');
+      }
+    }
+
+    scheduleSave() {
+      if (!this.storageWorks) { this.setSaveStatus('error'); return; }
+      this.setSaveStatus('saving');
+      clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(() => this.saveNow(), 250);
+    }
+
+    loadState() {
+      let raw = null;
+      try { raw = window.localStorage.getItem(STORAGE_KEY); }
+      catch (err) { this.storageWorks = false; this.setSaveStatus('error'); return; }
+      if (!raw) return;
+
+      try {
+        const data = JSON.parse(raw);
+        const saved = data && typeof data === 'object' ? data.servings : null;
+        if (!saved || typeof saved !== 'object') return;
+
+        ITEMS.forEach(item => {
+          if (!Object.prototype.hasOwnProperty.call(saved, item.id)) return;
+          const v = saved[item.id];
+          if (typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0 && v <= MAX_SERVINGS) {
+            item.servings = v;
+          }
+        });
+        this.setSaveStatus('saved');
+      } catch (err) { /* dữ liệu hỏng: bỏ qua */ }
+    }
+
+    // ---------- Toast ----------
+    showToast(message) {
+      const t = this.dom.toast;
+      clearTimeout(this.toastTimer);
+      t.textContent = message;
+      t.hidden = false;
+      t.style.animation = 'none';
+      void t.offsetWidth;
+      t.style.animation = '';
+      this.toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+    }
+
+    // ---------- Reset ----------
+    resetAll() {
+      ITEMS.forEach(item => { item.servings = 0; });
+      this.renderItems();
+      this.refresh();
+      this.saveNow();
+      this.showToast('Đã reset tất cả');
+    }
+
+    requestReset() {
+      const totals = this.calculateTotals();
+      if (totals.servings === 0) { this.showToast('Đơn hàng đang trống'); return; }
+      const dlg = this.dom.confirmDialog;
+      if (dlg && typeof dlg.showModal === 'function') {
+        this.dom.dialogDesc.textContent = `Đang có ${this.formatNumber(totals.servings)} phần. Toàn bộ số phần sẽ được đặt về 0 và không thể hoàn tác.`;
+        dlg.returnValue = '';
+        dlg.showModal();
+      } else if (window.confirm('Đặt toàn bộ số phần về 0?')) {
+        this.resetAll();
+      }
+    }
+
+    // ---------- Scan UI ----------
+    scanSetState(state, message) {
+      const d = this.dom;
+      d.scanStatus.textContent = message || '';
+      d.scanStatus.classList.toggle('is-error', state === 'error');
+      d.scanStatus.classList.toggle('is-loading', state === 'loading');
+      d.scanStatus.hidden = !message;
+      d.scanForm.hidden = state !== 'review';
+      d.scanConfirm.hidden = state !== 'review';
+      d.scanRetry.hidden = state !== 'error';
+    }
+
+    makeScanRow(id, qty) {
+      const row = this.el('div', 'scan-row');
+
+      const select = this.el('select', 'scan-select');
+      select.setAttribute('aria-label', 'Món');
+      ITEMS.forEach(it => {
+        const o = this.el('option', null, itemLabel(it));
+        o.value = it.id;
+        select.appendChild(o);
+      });
+      select.value = id;
+
+      const input = this.el('input', 'scan-qty');
+      input.type = 'text';
+      input.inputMode = 'numeric';
+      input.autocomplete = 'off';
+      input.maxLength = MAX_DIGITS;
+      input.value = String(qty);
+      input.setAttribute('aria-label', 'Số phần');
+      input.addEventListener('input', () => {
+        const d = input.value.replace(/\D/g, '').slice(0, MAX_DIGITS);
+        if (d !== input.value) input.value = d;
+      });
+      input.addEventListener('focus', () => { setTimeout(() => input.select(), 0); });
+
+      const unit = this.el('span', 'scan-unit', 'phần');
+
+      const del = this.el('button', 'scan-del');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Xóa dòng này');
+      del.appendChild(this.svgIcon('M6 6l12 12M18 6L6 18'));
+      del.addEventListener('click', () => { row.remove(); this.updateScanConfirmState(); });
+
+      row.append(select, input, unit, del);
+      return row;
+    }
+
+    updateScanConfirmState() {
+      const hasRows = this.dom.scanRows.children.length > 0;
+      this.dom.scanConfirm.disabled = !hasRows;
+      if (!hasRows) {
+        this.dom.scanStatus.hidden = false;
+        this.dom.scanStatus.classList.remove('is-error', 'is-loading');
+        this.dom.scanStatus.textContent = 'Không còn món nào để tính.';
+      } else {
+        this.dom.scanStatus.hidden = true;
+      }
+    }
+
+    showScanResult(result) {
+      const totals = {};
+      (result.items || []).forEach(r => {
+        if (!r || !this.itemMap.has(r.id)) return;
+        const q = this.sanitizeQuantity(r.servings);
+        if (q > 0) totals[r.id] = Math.min(MAX_SERVINGS, (totals[r.id] || 0) + q);
+      });
+
+      const rows = this.dom.scanRows;
+      rows.innerHTML = '';
+      ITEMS.forEach(it => { if (totals[it.id]) rows.appendChild(this.makeScanRow(it.id, totals[it.id])); });
+
+      const unmatched = (result.unmatched || []).filter(t => typeof t === 'string' && t.trim());
+      this.dom.scanUnmatched.hidden = unmatched.length === 0;
+      this.dom.scanUnmatched.textContent = unmatched.length ? 'Chưa nhận diện được: ' + unmatched.join('; ') : '';
+
+      this.dom.scanMergeWrap.hidden = this.calculateTotals().servings === 0;
+
+      if (!rows.children.length) {
+        this.scanSetState('error', 'Không tìm thấy món nào trong ảnh. Hãy chụp rõ hơn hoặc nhập tay.');
+        return;
+      }
+      this.scanSetState('review', '');
+      this.dom.scanConfirm.disabled = false;
+    }
+
+    // ---------- Scan flow ----------
+    async runScan(file) {
+      const token = ++this.scanToken;
+      if (this.scanAbort) this.scanAbort.abort();
+      const ctrl = (this.scanAbort = new AbortController());
+
+      this.dom.scanPreview.hidden = true;
+      this.scanSetState('loading', 'Đang quét ảnh…');
+      if (!this.dom.scanDialog.open) this.dom.scanDialog.showModal();
+
+      try {
+        const img = await resizeImage(file);
+        if (token !== this.scanToken) return;
+        this.dom.scanImg.src = img.dataUrl;
+        this.dom.scanPreview.hidden = false;
+
+        const result = await scanImage(img.base64, this.apiKey, ctrl.signal);
+        if (token !== this.scanToken) return;
+        this.showScanResult(result);
+      } catch (err) {
+        if (token !== this.scanToken) return;
+        const info = mapError(err);
+        if (!info) return;
+        if (info.badKey) this.apiKey = '';
+        this.scanSetState('error', info.text);
+      }
+    }
+
+    askApiKey() {
+      this.dom.keyInput.value = '';
+      this.dom.keyDialog.returnValue = '';
+      this.dom.keyDialog.showModal();
+      setTimeout(() => this.dom.keyInput.focus(), 0);
+    }
+
+    startScanWith(file) {
+      this.pendingFile = file;
+      if (!this.apiKey) { this.askApiKey(); return; }
+      this.runScan(file);
+    }
+
+    closeScan() {
+      this.scanToken++;
+      if (this.scanAbort) { this.scanAbort.abort(); this.scanAbort = null; }
+      if (this.dom.scanDialog.open) this.dom.scanDialog.close();
+      this.dom.scanRows.innerHTML = '';
+      this.dom.scanImg.removeAttribute('src');
+      this.pendingFile = null;
+    }
+
+    confirmScan() {
+      const add = {};
+      this.dom.scanRows.querySelectorAll('.scan-row').forEach(row => {
+        const id = row.querySelector('select').value;
+        const q = this.sanitizeQuantity(row.querySelector('input').value);
+        if (this.itemMap.has(id) && q > 0) add[id] = (add[id] || 0) + q;
+      });
+      const ids = Object.keys(add);
+      if (!ids.length) { this.showToast('Chưa có số phần nào để tính'); return; }
+
+      const merge = this.dom.scanMergeWrap.hidden ? true : this.dom.scanMerge.checked;
+      ITEMS.forEach(item => {
+        const next = (merge ? item.servings : 0) + (add[item.id] || 0);
+        if (next !== item.servings) this.updateQuantity(item.id, next);
+      });
+
+      const total = ids.reduce((n, id) => n + add[id], 0);
+      this.closeScan();
+      this.showToast('Đã tính ' + this.formatNumber(total) + ' phần từ ảnh');
+    }
+
+    // ---------- Events ----------
+    rowIdFrom(node) {
+      const tr = node.closest ? node.closest('tr[data-id]') : null;
+      return tr ? tr.dataset.id : null;
+    }
+
+    bindEvents() {
+      const body = this.dom.itemsBody;
+      const selectSoon = input => setTimeout(() => input.select(), 0);
+
+      // Một listener click: nút +/- và chọn toàn bộ số khi bấm vào ô
+      body.addEventListener('click', e => {
+        const btn = e.target.closest('.counter-btn');
+        if (btn) {
+          const id = this.rowIdFrom(btn);
+          const item = this.itemMap.get(id);
+          if (!item) return;
+          this.updateQuantity(id, item.servings + (btn.dataset.action === 'inc' ? 1 : -1));
+          return;
+        }
+        if (e.target.matches('.counter-input')) selectSoon(e.target);
+      });
+
+      body.addEventListener('focusin', e => {
+        if (e.target.matches('.counter-input')) selectSoon(e.target);
+      });
+
+      body.addEventListener('beforeinput', e => {
+        if (e.target.matches('.counter-input') && e.data && /\D/.test(e.data)) e.preventDefault();
+      });
+
+      body.addEventListener('input', e => {
+        const input = e.target;
+        if (!input.matches('.counter-input')) return;
+        const digits = input.value.replace(/\D/g, '').slice(0, MAX_DIGITS);
+        if (digits !== input.value) input.value = digits;
+        this.updateQuantity(this.rowIdFrom(input), digits === '' ? 0 : parseInt(digits, 10), { keepInput: true });
+      });
+
+      body.addEventListener('paste', e => {
+        const input = e.target;
+        if (!input.matches('.counter-input')) return;
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+        const m = text.match(/\d+/);
+        const value = m ? this.sanitizeQuantity(m[0]) : 0;
+        input.value = String(value);
+        this.updateQuantity(this.rowIdFrom(input), value, { keepInput: true });
+      });
+
+      body.addEventListener('focusout', e => {
+        const input = e.target;
+        if (!input.matches('.counter-input')) return;
+        const item = this.itemMap.get(this.rowIdFrom(input));
+        if (item) input.value = String(item.servings);
+      });
+
+      body.addEventListener('keydown', e => {
+        const input = e.target;
+        if (!input.matches('.counter-input')) return;
+        const id = this.rowIdFrom(input);
+        const item = this.itemMap.get(id);
+        if (!item) return;
+        if (e.key === 'ArrowUp') { e.preventDefault(); this.updateQuantity(id, item.servings + 1); input.select(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); this.updateQuantity(id, item.servings - 1); input.select(); }
+        else if (e.key === 'Enter') input.blur();
+      });
+
+      this.dom.resetBtn.addEventListener('click', () => this.requestReset());
+
+      this.dom.addItemBtn.addEventListener('click', () => {
+        const id = this.dom.itemSelect.value;
+        if (!id) { this.showToast('Vui lòng chọn món'); this.dom.itemSelect.focus(); return; }
+        const qty = this.sanitizeQuantity(this.dom.addQty.value);
+        if (qty <= 0) {
+          this.showToast('Vui lòng nhập số phần lớn hơn 0');
+          this.dom.addQty.focus();
+          this.dom.addQty.select();
+          return;
+        }
+        const item = this.itemMap.get(id);
+        this.updateQuantity(id, qty);
+        this.dom.addQty.value = '1';
+        this.dom.itemSelect.value = '';
+        this.showToast('Đã thêm ' + itemLabel(item));
+      });
+
+      this.dom.addQty.addEventListener('focus', () => this.dom.addQty.select());
+      this.dom.addQty.addEventListener('click', () => this.dom.addQty.select());
+
+      const dlg = this.dom.confirmDialog;
+      dlg.addEventListener('close', () => { if (dlg.returnValue === 'confirm') this.resetAll(); });
+      dlg.addEventListener('click', e => {
+        if (e.target !== dlg) return;
+        const r = dlg.getBoundingClientRect();
+        const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (!inside) dlg.close('cancel');
+      });
+
+      if ('ResizeObserver' in window) {
+        new ResizeObserver(() => {
+          document.documentElement.style.setProperty('--summary-h', this.dom.summary.offsetHeight + 'px');
+        }).observe(this.dom.summary);
+      }
+
+      window.addEventListener('storage', e => {
+        if (e.key !== STORAGE_KEY) return;
+        ITEMS.forEach(item => { item.servings = 0; });
+        this.loadState();
+        this.renderItems();
+        this.refresh();
+      });
+
+      this.bindScanEvents();
+    }
+
+    bindScanEvents() {
+      const d = this.dom;
+
+      d.scanBtn.addEventListener('click', () => d.scanInput.click());
+
+      d.scanInput.addEventListener('change', () => {
+        const file = d.scanInput.files && d.scanInput.files[0];
+        d.scanInput.value = '';
+        if (!file) return;
+        if (!/^image\//.test(file.type)) { this.showToast('Vui lòng chọn một tệp ảnh'); return; }
+        this.startScanWith(file);
+      });
+
+      d.keyDialog.addEventListener('close', () => {
+        const key = d.keyInput.value.trim();
+        const ok = d.keyDialog.returnValue === 'confirm';
+        d.keyInput.value = '';
+        if (!ok) { if (!d.scanDialog.open) this.pendingFile = null; return; }
+        if (!key) { this.showToast('Chưa nhập API key'); return; }
+        this.apiKey = key;
+        if (this.pendingFile) this.runScan(this.pendingFile);
+      });
+
+      d.scanCancel.addEventListener('click', () => this.closeScan());
+      d.scanDialog.addEventListener('cancel', e => { e.preventDefault(); this.closeScan(); });
+      d.scanConfirm.addEventListener('click', () => this.confirmScan());
+      d.scanRetry.addEventListener('click', () => {
+        if (!this.pendingFile) { this.closeScan(); return; }
+        if (!this.apiKey) { this.askApiKey(); return; }
+        this.runScan(this.pendingFile);
+      });
+      d.scanChangeKey.addEventListener('click', () => { this.apiKey = ''; this.askApiKey(); });
+    }
   }
 
-  /* ---------- Khởi động ---------- */
-  function init() {
-    dom.body = document.getElementById('items-body');
-    dom.summary = document.getElementById('summary');
-    dom.totalWater = document.getElementById('total-water');
-    dom.totalFried = document.getElementById('total-fried');
-    dom.totalServings = document.getElementById('total-servings');
-    dom.emptyHint = document.getElementById('empty-hint');
-    dom.saveStatus = document.getElementById('save-status');
-    dom.resetBtn = document.getElementById('reset-btn');
-    dom.scanBtn = document.getElementById('scan-btn');
-    dom.scanInput = document.getElementById('scan-input');
-    dom.keyDialog = document.getElementById('key-dialog');
-    dom.keyInput = document.getElementById('key-input');
-    dom.scanDialog = document.getElementById('scan-dialog');
-    dom.scanPreview = document.getElementById('scan-preview');
-    dom.scanImg = document.getElementById('scan-img');
-    dom.scanStatus = document.getElementById('scan-status');
-    dom.scanForm = document.getElementById('scan-form');
-    dom.scanRows = document.getElementById('scan-rows');
-    dom.scanUnmatched = document.getElementById('scan-unmatched');
-    dom.scanMerge = document.getElementById('scan-merge');
-    dom.scanMergeWrap = document.getElementById('scan-merge-wrap');
-    dom.scanCancel = document.getElementById('scan-cancel');
-    dom.scanRetry = document.getElementById('scan-retry');
-    dom.scanConfirm = document.getElementById('scan-confirm');
-    dom.scanChangeKey = document.getElementById('scan-change-key');
-    dom.itemSelect = document.getElementById('item-select');
-    dom.addQty = document.getElementById('add-qty');
-    dom.addItemBtn = document.getElementById('add-item-btn');
-
-    dom.addQty.addEventListener('focus', function () { dom.addQty.select(); });
-    dom.addQty.addEventListener('click', function () { dom.addQty.select(); });
-
-    dom.dialog = document.getElementById('confirm-dialog');
-    dom.dialogDesc = document.getElementById('dialog-desc');
-    dom.toast = document.getElementById('toast');
-
-    buildRows();
-    populateItemSelect();
-    loadState();
-    renderItems();
-    refresh();
-    bindEvents();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  // ---------- Bootstrap ----------
+  const start = () => new HoanhThanhCounter().init();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();
