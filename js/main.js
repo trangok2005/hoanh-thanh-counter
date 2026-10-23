@@ -159,7 +159,7 @@ const apiKeyDialog = new ApiKeyDialog({
   inputEl: byId('key-input'),
   onSubmit: (key) => {
     if (!key) {
-      toast.show('Chưa nhập API key');
+      toast.show('Chưa nhập key');
       return;
     }
     apiKey = key;

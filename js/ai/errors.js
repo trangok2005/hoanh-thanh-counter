@@ -70,8 +70,8 @@ export function normalizeError(err) {
   }
 
   const status = err.status;
-  if (status === 401) return new AuthError('API Key không hợp lệ.', status);
-  if (status === 403) return new AuthError('API Key không có quyền truy cập.', status);
+  if (status === 401) return new AuthError('Key không hợp lệ.', status);
+  if (status === 403) return new AuthError('Key không có quyền truy cập.', status);
   if (status === 400) return new ProviderError('Yêu cầu không hợp lệ. Hãy thử lại với ảnh khác.', status);
   if (status === 402) return new ProviderError('Tài khoản hết credit.', status);
   if (status === 404) return new ProviderError('Model không còn khả dụng. Hãy đổi model trong cấu hình.', status);
