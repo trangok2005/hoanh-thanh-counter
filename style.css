@@ -866,6 +866,265 @@ button { cursor: pointer; }
   .list-title-wrap h2 { font-size: 20px; }
 }
 
+/* =============== TABS =============== */
+.tabs-container {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.tablist {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--navy);
+  touch-action: manipulation;
+  transition: background-color .15s, border-color .15s, transform .08s, box-shadow .15s, color .15s;
+}
+.tab-btn:hover { background: #f1f5fa; }
+.tab-btn:active { transform: scale(.97); }
+.tab-btn[aria-selected="true"] {
+  color: #fff;
+  background: var(--navy);
+}
+.tab-btn:focus-visible {
+  outline: 3px solid rgba(29, 111, 224, .55);
+  outline-offset: 2px;
+}
+
+/* Tab panels */
+.tabpanel {
+  animation: fade-in .15s ease-out;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* =============== REPORT PANEL =============== */
+.report-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.report-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+  flex: 1 1 140px;
+}
+
+.report-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.report-date,
+.report-title,
+.report-money,
+.report-qty {
+  height: var(--tap);
+  padding: 0 12px;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  transition: border-color .15s, box-shadow .15s;
+}
+.report-date:focus,
+.report-title:focus,
+.report-money:focus,
+.report-qty:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 111, 224, .25);
+}
+
+.report-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.report-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.report-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.btn--small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.report-total {
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.report-total-value {
+  display: block;
+  font-size: clamp(22px, 5vw, 28px);
+  font-weight: 800;
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.report-expense-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expense-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.expense-amount,
+.expense-reason {
+  height: var(--tap);
+  padding: 0 12px;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  transition: border-color .15s, box-shadow .15s;
+}
+.expense-amount { min-width: 140px; flex: 0 0 140px; }
+.expense-reason { flex: 1 1 auto; min-width: 0; }
+.expense-amount:focus,
+.expense-reason:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 111, 224, .25);
+}
+
+.expense-del {
+  flex: 0 0 44px;
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.expense-del:hover { color: var(--danger); background: #fdecec; }
+.expense-del svg { width: 18px; height: 18px; }
+
+.report-preview {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: var(--font);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow: auto;
+  color: var(--text);
+}
+
+.report-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+/* Category header row in table */
+.category-header {
+  background: #f7f9fc;
+}
+.category-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 14px !important;
+}
+
+/* Mobile: category header as sticky section divider */
+@media (max-width: 959px) {
+  .category-header {
+    display: flex;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .category-label {
+    display: block;
+    width: 100%;
+    padding: 8px 12px !important;
+    background: #f0f4f9;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    margin: 8px -14px -8px -14px;
+    font-size: 11px;
+  }
+}
+
+/* Dash for empty rates/totals */
+.dash {
+  display: inline;
+  color: var(--muted);
+}
+
 /* =============== Giảm chuyển động =============== */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -37,93 +37,104 @@
   </header>
 
 
-  <div class="summary" id="summary">
-    <div class="container">
-      <section class="summary-grid" aria-label="Tổng quan số viên">
-        <div class="stat stat--water">
-          <div class="stat-top">
-            <span class="stat-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s6 6.2 6 10.5A6 6 0 0 1 6 13.5C6 9.2 12 3 12 3z"/></svg>
-            </span>
-            <span class="stat-label">Viên nước</span>
-          </div>
-          <div class="stat-value" id="total-water">0</div>
-        </div>
-
-        <div class="stat stat--fried">
-          <div class="stat-top">
-            <span class="stat-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.6 3-2.8 4.6-2.8 8A3.4 3.4 0 0 0 12 14.5c1.6 0 2.8-1.2 2.8-2.9 0-.8-.3-1.5-.7-2.1 2.6 1.1 4.4 3.5 4.4 6.2A6.5 6.5 0 0 1 12 22a6.5 6.5 0 0 1-6.5-6.5C5.5 10.2 10.8 8.2 12 3z"/></svg>
-            </span>
-            <span class="stat-label">Viên chiên</span>
-          </div>
-          <div class="stat-value" id="total-fried">0</div>
-        </div>
-      </section>
-    </div>
+  <!-- Tabs -->
+  <div class="container">
+    <div id="tabs-container" class="tabs-container"></div>
   </div>
 
   <main class="container main">
-    <section class="list" aria-labelledby="list-title">
-      <div class="list-head">
-        <div class="list-title-wrap">
-          <h2 id="list-title">Danh sách món ăn</h2>
-          <span class="count-pill" id="total-servings">0 phần</span>
-        </div>
-        <div class="list-actions">
-          <span class="save-status" id="save-status" role="status" aria-live="polite">Tự động lưu</span>
-          <button type="button" class="btn btn--primary" id="scan-btn">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.4-2h6.2l1.4 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
-            Nhập từ ảnh
-          </button>
-          <input type="file" id="scan-input" accept="image/*" hidden>
-        </div>
-      </div>
-      <p class="list-hint">Nhập số phần hoặc nhấn + / − để tính tổng số viên</p>
+    <!-- Tab: Đếm món -->
+    <section class="tabpanel" id="tab-dem-mon" role="tabpanel" aria-labelledby="tab-dem-mon">
+      <div class="summary" id="summary">
+        <section class="summary-grid" aria-label="Tổng quan số viên">
+          <div class="stat stat--water">
+            <div class="stat-top">
+              <span class="stat-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s6 6.2 6 10.5A6 6 0 0 1 6 13.5C6 9.2 12 3 12 3z"/></svg>
+              </span>
+              <span class="stat-label">Viên nước</span>
+            </div>
+            <div class="stat-value" id="total-water">0</div>
+          </div>
 
-      <div class="add-item-card">
-        <div class="add-item-body">
-          <label class="add-item-label" for="item-select">Chọn món</label>
-          <select id="item-select" class="add-select" aria-label="Chọn món ăn"></select>
-          <label class="add-item-label" for="add-qty">Số phần</label>
-          <input type="text" id="add-qty" class="add-qty" inputmode="numeric" pattern="[0-9]*" value="1" aria-label="Số phần">
-          <button type="button" class="btn btn--primary" id="add-item-btn">Thêm món</button>
-        </div>
-      </div>
-
-      <div class="empty-hint" id="empty-hint">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>
-        <span>Chưa có phần nào. Nhấn <strong>+</strong> ở món bên dưới để bắt đầu tính.</span>
+          <div class="stat stat--fried">
+            <div class="stat-top">
+              <span class="stat-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.6 3-2.8 4.6-2.8 8A3.4 3.4 0 0 0 12 14.5c1.6 0 2.8-1.2 2.8-2.9 0-.8-.3-1.5-.7-2.1 2.6 1.1 4.4 3.5 4.4 6.2A6.5 6.5 0 0 1 12 22a6.5 6.5 0 0 1-6.5-6.5C5.5 10.2 10.8 8.2 12 3z"/></svg>
+              </span>
+              <span class="stat-label">Viên chiên</span>
+            </div>
+            <div class="stat-value" id="total-fried">0</div>
+          </div>
+        </section>
       </div>
 
-      <div class="table-card">
-        <table class="items" id="items-table">
-          <caption class="sr-only">Danh sách món ăn và số viên hoành thánh tương ứng</caption>
-          <thead>
-            <tr>
-              <th scope="col" class="c-index">STT</th>
-              <th scope="col" class="c-name">Tên món</th>
-              <th scope="col" class="c-variant">Phân loại</th>
-              <th scope="col" class="c-water-rate">Viên nước/phần</th>
-              <th scope="col" class="c-fried-rate">Viên chiên/phần</th>
-              <th scope="col" class="c-qty">Số phần</th>
-              <th scope="col" class="c-water-total">Tổng viên nước</th>
-              <th scope="col" class="c-fried-total">Tổng viên chiên</th>
-            </tr>
-          </thead>
-          <tbody id="items-body"></tbody>
-        </table>
-      </div>
+      <section class="list" aria-labelledby="list-title">
+        <div class="list-head">
+          <div class="list-title-wrap">
+            <h2 id="list-title">Danh sách món ăn</h2>
+            <span class="count-pill" id="total-servings">0 phần</span>
+          </div>
+          <div class="list-actions">
+            <span class="save-status" id="save-status" role="status" aria-live="polite">Tự động lưu</span>
+            <button type="button" class="btn btn--primary" id="scan-btn">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.4-2h6.2l1.4 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
+              Nhập từ ảnh
+            </button>
+            <input type="file" id="scan-input" accept="image/*" hidden>
+          </div>
+        </div>
+        <p class="list-hint">Nhập số phần hoặc nhấn + / − để tính tổng số viên</p>
+
+        <div class="add-item-card">
+          <div class="add-item-body">
+            <label class="add-item-label" for="item-select">Chọn món</label>
+            <select id="item-select" class="add-select" aria-label="Chọn món ăn"></select>
+            <label class="add-item-label" for="add-qty">Số phần</label>
+            <input type="text" id="add-qty" class="add-qty" inputmode="numeric" pattern="[0-9]*" value="1" aria-label="Số phần">
+            <button type="button" class="btn btn--primary" id="add-item-btn">Thêm món</button>
+          </div>
+        </div>
+
+        <div class="empty-hint" id="empty-hint">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>
+          <span>Chưa có phần nào. Nhấn <strong>+</strong> ở món bên dưới để bắt đầu tính.</span>
+        </div>
+
+        <div class="table-card">
+          <table class="items" id="items-table">
+            <caption class="sr-only">Danh sách món ăn và số viên hoành thánh tương ứng</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="c-index">STT</th>
+                <th scope="col" class="c-name">Tên món</th>
+                <th scope="col" class="c-variant">Phân loại</th>
+                <th scope="col" class="c-water-rate">Viên nước/phần</th>
+                <th scope="col" class="c-fried-rate">Viên chiên/phần</th>
+                <th scope="col" class="c-qty">Số phần</th>
+                <th scope="col" class="c-water-total">Tổng viên nước</th>
+                <th scope="col" class="c-fried-total">Tổng viên chiên</th>
+              </tr>
+            </thead>
+            <tbody id="items-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- Tab: Báo cáo -->
+    <section class="tabpanel" id="tab-bao-cao" role="tabpanel" aria-labelledby="tab-bao-cao" hidden>
+      <div id="report-panel"></div>
     </section>
   </main>
 
   <dialog id="confirm-dialog" class="dialog" aria-labelledby="dialog-title" aria-describedby="dialog-desc">
     <form method="dialog">
-      <h2 id="dialog-title">Reset tất cả số phần?</h2>
-      <p id="dialog-desc">Toàn bộ số phần đang nhập sẽ được đặt về 0.</p>
+      <h2 id="dialog-title">Xác nhận</h2>
+      <p id="dialog-desc"></p>
       <div class="dialog-actions">
         <button type="submit" value="cancel" class="btn btn--ghost" autofocus>Hủy</button>
-        <button type="submit" value="confirm" class="btn btn--danger">Xác nhận reset</button>
+        <button type="submit" value="confirm" class="btn btn--danger">Xác nhận</button>
       </div>
     </form>
   </dialog>
@@ -132,7 +143,7 @@
     <form method="dialog" id="key-form">
       <h2 id="key-title">Nhập password</h2>
       <input type="password" id="key-input" class="field" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="đoán xem ..." aria-label="OpenRouter API key">
-      <a class="key-link" href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Lấy API key tại OpenRouter</a>
+      <a class="key-link" href="/" target="_blank" rel="noopener noreferrer">Liên hệ ba Trạng để biết thêm chi tiết</a>
       <div class="dialog-actions">
         <button type="submit" value="cancel" class="btn btn--ghost" formnovalidate>Hủy</button>
         <button type="submit" value="confirm" class="btn btn--primary">Tiếp tục quét</button>
@@ -143,11 +154,12 @@
   <dialog id="scan-dialog" class="dialog dialog--wide" aria-labelledby="scan-title">
     <div class="scan-body">
       <h2 id="scan-title">Quét ảnh đơn hàng</h2>
+      <p class="scan-help">Ảnh sẽ được gửi tới bên thứ ba để nhận diện món.</p>
       <div class="scan-preview" id="scan-preview" hidden><img id="scan-img" alt="Ảnh đơn hàng đã chọn"></div>
       <p class="scan-status" id="scan-status" role="status" aria-live="polite"></p>
 
       <div id="scan-form" hidden>
-        <p class="scan-help">Kiểm tra và chỉnh lại nếu cần, rồi bấm xác nhận để tính.</p>
+        <p class="scan-help">Kiểm tra lại nha sai Trạng miễn trừ trách nhiệm</p>
         <div class="scan-rows" id="scan-rows"></div>
         <p class="scan-unmatched" id="scan-unmatched" hidden></p>
         <label class="scan-merge" id="scan-merge-wrap" hidden>
@@ -159,7 +171,7 @@
       <div class="dialog-actions">
         <button type="button" class="btn btn--ghost" id="scan-cancel">Hủy</button>
         <button type="button" class="btn btn--ghost" id="scan-retry" hidden>Thử lại</button>
-        <button type="button" class="btn btn--primary" id="scan-confirm" hidden>Xác nhận &amp; tính</button>
+        <button type="button" class="btn btn--primary" id="scan-confirm" hidden>Xác nhận & tính</button>
       </div>
       <button type="button" class="link-btn" id="scan-change-key">Đổi key</button>
     </div>
@@ -167,6 +179,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="script.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
